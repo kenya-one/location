@@ -57,10 +57,44 @@
     padding: 10px 14px;
     font-size: 13px;
     z-index: 5;
-    line-height: 1.7;
   }
-  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex: none;
+    border: 1px solid var(--line);
+  }
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex: none;
+  }
   .wrap { position: relative; flex: 1; display: flex; }
+  .info-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 2px;
+  }
+  .info-card img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .info-card .name { font-weight: 600; font-size: 14px; }
+  .info-card .time { font-size: 12px; color: #666; }
 </style>
 </head>
 <body>
@@ -74,22 +108,22 @@
 
 <div class="wrap">
   <div id="map"></div>
-  <div class="legend">
-    <div><span class="swatch" style="background:#3ba3ff"></span><span id="nameA">Person A</span></div>
-    <div><span class="swatch" style="background:#ff9f43"></span><span id="nameB">Person B</span></div>
-  </div>
+  <div class="legend" id="legend"></div>
 </div>
 
 <script>
   // ---- CONFIGURE THESE ----
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzJmRMalCFwm2T8p2FNUKCzZvjm2b2G8zFlGbVTU9MdKwq2jKfdBKf9C0o7_XASqKRU/exec";
-  const SECRET = "my-team-2026"; // must match setup.gs
+  const WEB_APP_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+  const SECRET = "change-this-secret"; // must match Code.gs
   const POLL_MS = 5000;
   // --------------------------
 
-  let map, markerA, markerB, line;
-  let namesAssigned = false;
-  let nameKeys = [];
+  const COLORS = ["#3ba3ff", "#ff9f43", "#35c78a", "#ff5d5d", "#c78aff"];
+
+  let map;
+  let markers = {}; // name -> google.maps.Marker
+  let infoWindow;
+  let line;
 
   function initMap() {
     map = new google.maps.Map(document.getElementById("map"), {
@@ -98,12 +132,7 @@
       styles: darkMapStyle
     });
 
-    markerA = new google.maps.Marker({
-      map, icon: dotIcon("#3ba3ff"), label: null
-    });
-    markerB = new google.maps.Marker({
-      map, icon: dotIcon("#ff9f43"), label: null
-    });
+    infoWindow = new google.maps.InfoWindow();
     line = new google.maps.Polyline({
       map,
       strokeColor: "#8a99a6",
@@ -115,7 +144,27 @@
     setInterval(poll, POLL_MS);
   }
 
-  function dotIcon(color) {
+  // Builds a circular avatar pin as an inline SVG data URL.
+  // Falls back to a plain colored dot if no photo is available.
+  function buildIcon(photoUrl, color) {
+    const size = 50;
+    if (photoUrl) {
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+          <defs>
+            <clipPath id="clip"><circle cx="25" cy="25" r="20"/></clipPath>
+          </defs>
+          <circle cx="25" cy="25" r="23" fill="white"/>
+          <circle cx="25" cy="25" r="21" fill="${color}"/>
+          <image href="${photoUrl}" x="5" y="5" width="40" height="40"
+                 clip-path="url(#clip)" preserveAspectRatio="xMidYMid slice"/>
+        </svg>`;
+      return {
+        url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
+        scaledSize: new google.maps.Size(size, size),
+        anchor: new google.maps.Point(size / 2, size / 2)
+      };
+    }
     return {
       path: google.maps.SymbolPath.CIRCLE,
       scale: 9,
@@ -126,6 +175,10 @@
     };
   }
 
+  function colorFor(name, index) {
+    return COLORS[index % COLORS.length];
+  }
+
   function poll() {
     fetch(`${WEB_APP_URL}?secret=${encodeURIComponent(SECRET)}&mode=latest`)
       .then(res => res.json())
@@ -133,44 +186,72 @@
         const names = Object.keys(latest);
         if (names.length === 0) return;
 
-        if (!namesAssigned && names.length >= 1) {
-          nameKeys = names.slice(0, 2);
-          document.getElementById("nameA").textContent = nameKeys[0] || "Person A";
-          if (nameKeys[1]) document.getElementById("nameB").textContent = nameKeys[1];
-          namesAssigned = names.length >= 2;
-        }
-
-        const a = latest[nameKeys[0]];
-        const b = nameKeys[1] ? latest[nameKeys[1]] : null;
-
         const bounds = new google.maps.LatLngBounds();
+        const legend = document.getElementById("legend");
+        legend.innerHTML = "";
 
-        if (a) {
-          const posA = { lat: Number(a.lat), lng: Number(a.lng) };
-          markerA.setPosition(posA);
-          bounds.extend(posA);
-        }
+        names.forEach((name, i) => {
+          const person = latest[name];
+          const pos = { lat: Number(person.lat), lng: Number(person.lng) };
+          const color = colorFor(name, i);
+          const icon = buildIcon(person.image, color);
 
-        if (b) {
-          const posB = { lat: Number(b.lat), lng: Number(b.lng) };
-          markerB.setPosition(posB);
-          bounds.extend(posB);
+          if (!markers[name]) {
+            markers[name] = new google.maps.Marker({ map, icon, position: pos });
+            markers[name].addListener("click", () => showInfo(name, person, markers[name]));
+          } else {
+            markers[name].setIcon(icon);
+            markers[name].setPosition(pos);
+          }
 
+          bounds.extend(pos);
+
+          // Legend row
+          const row = document.createElement("div");
+          row.className = "legend-row";
+          if (person.image) {
+            row.innerHTML = `<img class="avatar" src="${person.image}"><span>${name}</span>`;
+          } else {
+            row.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${name}</span>`;
+          }
+          legend.appendChild(row);
+        });
+
+        // Distance + line only make sense with exactly 2+ people — use first two
+        if (names.length >= 2) {
+          const a = latest[names[0]];
+          const b = latest[names[1]];
           line.setPath([
             { lat: Number(a.lat), lng: Number(a.lng) },
-            posB
+            { lat: Number(b.lat), lng: Number(b.lng) }
           ]);
 
           const dist = haversineKm(a.lat, a.lng, b.lat, b.lng);
           document.getElementById("distanceVal").textContent =
             dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(2)} km`;
-
-          map.fitBounds(bounds, 80);
-        } else if (a) {
-          map.setCenter({ lat: Number(a.lat), lng: Number(a.lng) });
         }
+
+        map.fitBounds(bounds, 80);
+        if (names.length === 1) map.setZoom(14);
       })
       .catch(err => console.error("Poll failed:", err));
+  }
+
+  function showInfo(name, person, marker) {
+    const timeStr = person.time ? new Date(person.time).toLocaleString() : "";
+    const photoHtml = person.image
+      ? `<img src="${person.image}">`
+      : "";
+    infoWindow.setContent(`
+      <div class="info-card">
+        ${photoHtml}
+        <div>
+          <div class="name">${name}</div>
+          <div class="time">${timeStr}</div>
+        </div>
+      </div>
+    `);
+    infoWindow.open(map, marker);
   }
 
   function haversineKm(lat1, lng1, lat2, lng2) {
