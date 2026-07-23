@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Share Location</title>
+<style>
+  :root {
+    --bg: #10151b;
+    --panel: #182129;
+    --line: #2a3540;
+    --text: #e8edf2;
+    --muted: #8a99a6;
+    --accent: #3ba3ff;
+    --good: #35c78a;
+    --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px;
+  }
+  p.sub {
+    color: var(--muted);
+    margin: 0 0 24px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #0e1419;
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 18px;
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    width: 100%;
+    padding: 13px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.05s ease, opacity 0.2s ease;
+    margin-bottom: 10px;
+  }
+  button:active { transform: scale(0.98); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #locateBtn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  #submitBtn {
+    background: var(--accent);
+    color: #06131f;
+  }
+  #submitBtn.update {
+    background: var(--good);
+  }
+  .preview {
+    background: #0e1419;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 18px;
+    display: none;
+  }
+  .preview.show { display: block; }
+  .preview strong { color: var(--text); }
+  .status {
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 18px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+  }
+  .dot.good { background: var(--good); }
+  .dot.err { background: var(--bad); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Share your location</h1>
+  <p class="sub">
+    This sends a single snapshot of your location — it does not track you
+    continuously. Come back anytime and submit again to update it.
+  </p>
+
+  <label for="name">Your name</label>
+  <input type="text" id="name" placeholder="e.g. Asha" autocomplete="off">
+
+  <div class="preview" id="preview"></div>
+
+  <button id="locateBtn">Get My Location</button>
+  <button id="submitBtn" disabled>Share Location</button>
+
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText"></span>
+  </div>
+</div>
+
+<script>
+  // ---- CONFIGURE THESE TWO VALUES ----
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzJmRMalCFwm2T8p2FNUKCzZvjm2b2G8zFlGbVTU9MdKwq2jKfdBKf9C0o7_XASqKRU/exec";
+  const SECRET = "my-team-2026"; // must match Code.gs
+  // -------------------------------------
+
+  const nameInput = document.getElementById("name");
+  const locateBtn = document.getElementById("locateBtn");
+  const submitBtn = document.getElementById("submitBtn");
+  const preview = document.getElementById("preview");
+  const dot = document.getElementById("dot");
+  const statusText = document.getElementById("statusText");
+
+  let currentPos = null;
+  let hasSharedBefore = false;
+
+  // Remember name across visits
+  nameInput.value = localStorage.getItem("tracker_name") || "";
+  hasSharedBefore = localStorage.getItem("tracker_has_shared") === "true";
+  updateSubmitLabel();
+
+  locateBtn.addEventListener("click", getLocation);
+  submitBtn.addEventListener("click", submitLocation);
+
+  function getLocation() {
+    if (!navigator.geolocation) {
+      setStatus("err", "Geolocation not supported on this device");
+      return;
+    }
+
+    locateBtn.disabled = true;
+    setStatus("", "Finding your location…");
+
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        currentPos = pos;
+        locateBtn.disabled = false;
+        submitBtn.disabled = false;
+        setStatus("good", "Location found");
+        preview.classList.add("show");
+        preview.innerHTML =
+          `<strong>Lat:</strong> ${pos.coords.latitude.toFixed(5)}<br>` +
+          `<strong>Lng:</strong> ${pos.coords.longitude.toFixed(5)}<br>` +
+          `Accuracy: ~${Math.round(pos.coords.accuracy)} m`;
+      },
+      err => {
+        locateBtn.disabled = false;
+        setStatus("err", "Location error: " + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  }
+
+  function submitLocation() {
+    const name = nameInput.value.trim();
+    if (!name) {
+      alert("Please enter your name first.");
+      return;
+    }
+    if (!currentPos) {
+      alert("Get your location first.");
+      return;
+    }
+
+    localStorage.setItem("tracker_name", name);
+    submitBtn.disabled = true;
+    setStatus("", "Sending…");
+
+    const payload = {
+      secret: SECRET,
+      name: name,
+      lat: currentPos.coords.latitude,
+      lng: currentPos.coords.longitude,
+      time: new Date().toISOString()
+    };
+
+    fetch(WEB_APP_URL, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    })
+      .then(res => res.json())
+      .then(res => {
+        submitBtn.disabled = false;
+        if (res.error) {
+          setStatus("err", res.error);
+          return;
+        }
+        hasSharedBefore = true;
+        localStorage.setItem("tracker_has_shared", "true");
+        updateSubmitLabel();
+        setStatus("good", `Shared at ${new Date().toLocaleTimeString()}`);
+      })
+      .catch(() => {
+        submitBtn.disabled = false;
+        setStatus("err", "Failed to send — try again");
+      });
+  }
+
+  function updateSubmitLabel() {
+    submitBtn.textContent = hasSharedBefore ? "Update Location" : "Share Location";
+    submitBtn.classList.toggle("update", hasSharedBefore);
+  }
+
+  function setStatus(state, text) {
+    dot.className = "dot" + (state ? " " + state : "");
+    statusText.textContent = text;
+  }
+</script>
+
+</body>
+</html>
