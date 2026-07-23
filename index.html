@@ -65,6 +65,37 @@
     outline: none;
     border-color: var(--accent);
   }
+  .photo-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .photo-preview {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #0e1419;
+    border: 1px solid var(--line);
+    object-fit: cover;
+    flex: none;
+  }
+  .photo-preview.placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+  }
+  #photoBtn {
+    flex: 1;
+    margin-bottom: 0;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  input[type="file"] { display: none; }
   button {
     width: 100%;
     padding: 13px;
@@ -125,12 +156,20 @@
 <div class="card">
   <h1>Share your location</h1>
   <p class="sub">
-    This sends a single snapshot of your location — it does not track you
-    continuously. Come back anytime and submit again to update it.
+    This sends a single snapshot of your location and photo — it does not
+    track you continuously. Come back anytime and submit again to update
+    either one.
   </p>
 
   <label for="name">Your name</label>
   <input type="text" id="name" placeholder="e.g. Asha" autocomplete="off">
+
+  <label>Your photo (optional)</label>
+  <div class="photo-row">
+    <img id="photoPreview" class="photo-preview placeholder" alt="">
+    <button id="photoBtn" type="button">Choose Photo</button>
+    <input type="file" id="photoInput" accept="image/*" capture="user">
+  </div>
 
   <div class="preview" id="preview"></div>
 
@@ -145,9 +184,12 @@
 
 <script>
   // ---- CONFIGURE THESE TWO VALUES ----
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzJmRMalCFwm2T8p2FNUKCzZvjm2b2G8zFlGbVTU9MdKwq2jKfdBKf9C0o7_XASqKRU/exec";
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwHLc5b6ha6Fx1R5iWwhvwhl3QrKbOtwgINCG721uwBjzyl_8PQ0bhZcPuQ-q7NDcw_/exec";
   const SECRET = "my-team-2026"; // must match Code.gs
   // -------------------------------------
+
+  const MAX_DIMENSION = 500; // resize photos before upload to keep payload small
+  const JPEG_QUALITY = 0.8;
 
   const nameInput = document.getElementById("name");
   const locateBtn = document.getElementById("locateBtn");
@@ -155,8 +197,12 @@
   const preview = document.getElementById("preview");
   const dot = document.getElementById("dot");
   const statusText = document.getElementById("statusText");
+  const photoBtn = document.getElementById("photoBtn");
+  const photoInput = document.getElementById("photoInput");
+  const photoPreviewImg = document.getElementById("photoPreview");
 
   let currentPos = null;
+  let photoDataUrl = null; // resized/compressed base64 data URL, or null
   let hasSharedBefore = false;
 
   // Remember name across visits
@@ -166,6 +212,44 @@
 
   locateBtn.addEventListener("click", getLocation);
   submitBtn.addEventListener("click", submitLocation);
+  photoBtn.addEventListener("click", () => photoInput.click());
+  photoInput.addEventListener("change", handlePhotoSelect);
+
+  function handlePhotoSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function (evt) {
+      const img = new Image();
+      img.onload = function () {
+        photoDataUrl = resizeImage(img);
+        photoPreviewImg.src = photoDataUrl;
+        photoPreviewImg.classList.remove("placeholder");
+        photoBtn.textContent = "Change Photo";
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function resizeImage(img) {
+    let { width, height } = img;
+    if (width > height && width > MAX_DIMENSION) {
+      height = Math.round((height * MAX_DIMENSION) / width);
+      width = MAX_DIMENSION;
+    } else if (height > MAX_DIMENSION) {
+      width = Math.round((width * MAX_DIMENSION) / height);
+      height = MAX_DIMENSION;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+  }
 
   function getLocation() {
     if (!navigator.geolocation) {
@@ -218,6 +302,9 @@
       lng: currentPos.coords.longitude,
       time: new Date().toISOString()
     };
+    if (photoDataUrl) {
+      payload.image = photoDataUrl; // only include if a new photo was chosen
+    }
 
     fetch(WEB_APP_URL, {
       method: "POST",
