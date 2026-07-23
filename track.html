@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Distance Tracker</title>
+<style>
+  :root {
+    --bg: #10151b;
+    --panel: #182129;
+    --line: #2a3540;
+    --text: #e8edf2;
+    --muted: #8a99a6;
+    --accent: #3ba3ff;
+    --good: #35c78a;
+    --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  .distance-pill {
+    background: #0e1419;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .distance-pill strong { color: var(--accent); font-size: 15px; }
+  #map { flex: 1; width: 100%; }
+  .legend {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    z-index: 5;
+    line-height: 1.7;
+  }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .wrap { position: relative; flex: 1; display: flex; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Live Location Tracker</h1>
+  <div class="distance-pill">
+    Distance: <strong id="distanceVal">—</strong>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="map"></div>
+  <div class="legend">
+    <div><span class="swatch" style="background:#3ba3ff"></span><span id="nameA">Person A</span></div>
+    <div><span class="swatch" style="background:#ff9f43"></span><span id="nameB">Person B</span></div>
+  </div>
+</div>
+
+<script>
+  // ---- CONFIGURE THESE ----
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzJmRMalCFwm2T8p2FNUKCzZvjm2b2G8zFlGbVTU9MdKwq2jKfdBKf9C0o7_XASqKRU/exec";
+  const SECRET = "my-team-2026"; // must match setup.gs
+  const POLL_MS = 5000;
+  // --------------------------
+
+  let map, markerA, markerB, line;
+  let namesAssigned = false;
+  let nameKeys = [];
+
+  function initMap() {
+    map = new google.maps.Map(document.getElementById("map"), {
+      zoom: 13,
+      center: { lat: 0, lng: 0 },
+      styles: darkMapStyle
+    });
+
+    markerA = new google.maps.Marker({
+      map, icon: dotIcon("#3ba3ff"), label: null
+    });
+    markerB = new google.maps.Marker({
+      map, icon: dotIcon("#ff9f43"), label: null
+    });
+    line = new google.maps.Polyline({
+      map,
+      strokeColor: "#8a99a6",
+      strokeOpacity: 0.7,
+      strokeWeight: 2
+    });
+
+    poll();
+    setInterval(poll, POLL_MS);
+  }
+
+  function dotIcon(color) {
+    return {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 9,
+      fillColor: color,
+      fillOpacity: 1,
+      strokeColor: "#0e1419",
+      strokeWeight: 2
+    };
+  }
+
+  function poll() {
+    fetch(`${WEB_APP_URL}?secret=${encodeURIComponent(SECRET)}&mode=latest`)
+      .then(res => res.json())
+      .then(latest => {
+        const names = Object.keys(latest);
+        if (names.length === 0) return;
+
+        if (!namesAssigned && names.length >= 1) {
+          nameKeys = names.slice(0, 2);
+          document.getElementById("nameA").textContent = nameKeys[0] || "Person A";
+          if (nameKeys[1]) document.getElementById("nameB").textContent = nameKeys[1];
+          namesAssigned = names.length >= 2;
+        }
+
+        const a = latest[nameKeys[0]];
+        const b = nameKeys[1] ? latest[nameKeys[1]] : null;
+
+        const bounds = new google.maps.LatLngBounds();
+
+        if (a) {
+          const posA = { lat: Number(a.lat), lng: Number(a.lng) };
+          markerA.setPosition(posA);
+          bounds.extend(posA);
+        }
+
+        if (b) {
+          const posB = { lat: Number(b.lat), lng: Number(b.lng) };
+          markerB.setPosition(posB);
+          bounds.extend(posB);
+
+          line.setPath([
+            { lat: Number(a.lat), lng: Number(a.lng) },
+            posB
+          ]);
+
+          const dist = haversineKm(a.lat, a.lng, b.lat, b.lng);
+          document.getElementById("distanceVal").textContent =
+            dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(2)} km`;
+
+          map.fitBounds(bounds, 80);
+        } else if (a) {
+          map.setCenter({ lat: Number(a.lat), lng: Number(a.lng) });
+        }
+      })
+      .catch(err => console.error("Poll failed:", err));
+  }
+
+  function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  const darkMapStyle = [
+    { elementType: "geometry", stylers: [{ color: "#1a222b" }] },
+    { elementType: "labels.text.stroke", stylers: [{ color: "#1a222b" }] },
+    { elementType: "labels.text.fill", stylers: [{ color: "#8a99a6" }] },
+    { featureType: "road", elementType: "geometry", stylers: [{ color: "#2a3540" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#0e1419" }] },
+    { featureType: "poi", stylers: [{ visibility: "off" }] }
+  ];
+</script>
+
+<!-- Replace YOUR_GOOGLE_MAPS_API_KEY with a real Maps JavaScript API key -->
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAtjFhtAivbZkleUUb8Jd2PAZqzVO7WDoA&callback=initMap">
+</script>
+
+</body>
+</html>
